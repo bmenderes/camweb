@@ -21,24 +21,36 @@
     tfoot td{background:#fafafa;}
   </style>
 </head>
-<form id="csrfForm" style="display:none;">
-  {% csrf_token %}
-</form>
+
 <body>
+  <!-- CSRF -->
+  <form id="csrfForm" style="display:none;">{% csrf_token %}</form>
+
+  <!-- Motion Profile seçenekleri için GİZLİ TEMPLATE (Django tarafından bir kez render edilir) -->
+  <template id="profile-options">
+    {% for p in profiles %}
+      <option value="{{p}}">{{p}}</option>
+    {% endfor %}
+  </template>
+
   <h2>CAM Profile — Çok Segmentli</h2>
 
   <div class="row">
-    <button class="btn" onclick="addRow()">Satır Ekle</button>
-    <button class="btn" onclick="deleteSelected()">Seçileni Sil</button>
+    <button class="btn" type="button" onclick="addRow()">Satır Ekle</button>
+    <button class="btn" type="button" onclick="deleteSelected()">Seçileni Sil</button>
     <label>Points/Segment:
       <input id="npts" type="number" value="100" min="10" step="10">
     </label>
-    <button class="btn primary" onclick="draw()">Çiz</button>
-    <button class="btn" onclick="exportCsv()">CSV İndir</button>
+    <button class="btn primary" type="button" onclick="draw()">Çiz</button>
+    <button class="btn" type="button" onclick="exportCsv()">CSV İndir</button>
   </div>
 
   <div class="card">
-    <div class="small">Her satır bir <b>segment</b>tir (Time = süre [s], Position = o segmentte gidilecek artış [mm]).</div>
+    <div class="small">
+      Her satır bir <b>segment</b>tir. <b>Time [unit]</b> ve <b>Position [mm]</b> <u>mutlak</u> uç değerlerdir.
+      Zaman ölçeği: <b>100 unit = 1.00 s</b>.
+    </div>
+
     <table id="segTable">
       <thead>
         <tr>
@@ -53,17 +65,12 @@
       <tbody>
         <tr>
           <td><input type="checkbox"></td>
-          <td><input type="number" step="0.01" value="1.0"></td>
+          <!-- 100 ⇒ 1.00 s -->
+          <td><input type="number" step="1" value="100"></td>
           <td><input type="number" step="0.1" value="500"></td>
           <td><input type="number" step="0.01" min="0" max="1" value="0.5"></td>
-          <td><input type="number" step="0.01" min="0" max="1" value="1"></td>
-          <td>
-            <select>
-              {% for p in profiles %}
-              <option value="{{p}}" {% if p == 'Polynomial of 5th degree' %}selected{% endif %}>{{p}}</option>
-              {% endfor %}
-            </select>
-          </td>
+          <td><input type="number" step="0.01" min="0" max="1" value="1.00"></td>
+          <td><select class="profile-select"></select></td>
         </tr>
       </tbody>
       <tfoot>
@@ -89,22 +96,41 @@
   </div>
 
 <script>
-    const csrftoken = document.querySelector('#csrfForm input[name="csrfmiddlewaretoken"]').value;
+/* ---- Select’leri doldurmak için tek kaynak ---- */
+function getProfileOptionsHTML(){
+  return document.getElementById('profile-options').innerHTML.trim();
+}
+function hydrateAllProfileSelects(){
+  const html = getProfileOptionsHTML();
+  document.querySelectorAll('.profile-select').forEach(sel=>{
+    sel.innerHTML = html;
+    // varsayılan: Polynomial of 5th degree varsa onu seç
+    const def = "Polynomial of 5th degree";
+    if ([...sel.options].some(o=>o.value===def)) sel.value = def;
+  });
+}
+
+/* ---- CSRF ---- */
+const csrftoken = document.querySelector('#csrfForm input[name="csrfmiddlewaretoken"]').value;
+
+/* ---- Satır işlemleri ---- */
 function addRow(){
   const tbody = document.querySelector("#segTable tbody");
   const tr = document.createElement("tr");
   tr.innerHTML = `
     <td><input type="checkbox"></td>
-    <td><input type="number" step="0.01" value="1.0"></td>
-    <td><input type="number" step="0.1" value="100"></td>
+    <td><input type="number" step="1" value="100"></td>
+    <td><input type="number" step="0.1" value="0"></td>
     <td><input type="number" step="0.01" min="0" max="1" value="0.5"></td>
-    <td><input type="number" step="0.01" min="0" max="1" value="1"></td>
-    <td>
-      <select>
-        {% for p in profiles %}<option value="{{p}}">{{p}}</option>{% endfor %}
-      </select>
-    </td>`;
+    <td><input type="number" step="0.01" min="0" max="1" value="1.00"></td>
+    <td><select class="profile-select"></select></td>
+  `;
   tbody.appendChild(tr);
+  // yeni eklenen select’i doldur
+  tr.querySelector('.profile-select').innerHTML = getProfileOptionsHTML();
+  const def = "Polynomial of 5th degree";
+  const sel = tr.querySelector('.profile-select');
+  if ([...sel.options].some(o=>o.value===def)) sel.value = def;
 }
 
 function deleteSelected(){
@@ -116,28 +142,32 @@ function deleteSelected(){
 function getRows(){
   const rows = [];
   document.querySelectorAll("#segTable tbody tr").forEach(tr=>{
-    const t = tr.children[1].querySelector('input').value;
-    const x = tr.children[2].querySelector('input').value;
-    const lam = tr.children[3].querySelector('input').value;
-    const c = tr.children[4].querySelector('input').value;
-    const prof = tr.children[5].querySelector('select').value;
-    rows.push({Time: parseFloat(t), Position: parseFloat(x), Lambda: parseFloat(lam), C: parseFloat(c), "Motion Profile": prof});
+    const t   = parseFloat(tr.children[1].querySelector('input').value);
+    const pos = parseFloat(tr.children[2].querySelector('input').value);
+    const lam = parseFloat(tr.children[3].querySelector('input').value);
+    const c   = parseFloat(tr.children[4].querySelector('input').value);
+    const prof= tr.children[5].querySelector('select').value;
+    rows.push({Time: t, Position: pos, Lambda: lam, C: c, "Motion Profile": prof});
   });
   return rows;
 }
 
+/* ---- Çiz / Önizleme / CSV ---- */
 async function draw(){
   const rows = getRows();
   if(rows.length===0){ alert("En az bir satır ekleyin."); return; }
+  // absolute time artan olmalı
+  for (let i=1;i<rows.length;i++){
+    if (rows[i].Time < rows[i-1].Time){
+      alert(`Time artan olmalı (row ${i+1}).`); return;
+    }
+  }
   const npts = parseInt(document.getElementById("npts").value || "100");
   const resp = await fetch("{% url 'generate' %}", {
-  method:'POST',
-  headers:{
-    'Content-Type':'application/json',
-    'X-CSRFToken': csrftoken   // <--- eklendi
-  },
-  body: JSON.stringify({rows: rows, npts_per_seg: npts})
-});
+    method:'POST',
+    headers:{ 'Content-Type':'application/json', 'X-CSRFToken': csrftoken },
+    body: JSON.stringify({rows: rows, npts_per_seg: npts})
+  });
   const data = await resp.json();
   if(!data.ok){ alert(data.error || "Hata"); return; }
   document.getElementById("img1").src = data.img1;
@@ -149,27 +179,8 @@ async function draw(){
 function renderPreview(rows){
   const thead = document.querySelector("#preview thead");
   const tbody = document.querySelector("#preview tbody");
-  tbody.innerHTML = "";
-  thead.innerHTML = "";
+  tbody.innerHTML = ""; thead.innerHTML = "";
   if(!rows || rows.length===0){ return; }
   const cols = Object.keys(rows[0]);
   const trh = document.createElement("tr");
-  cols.forEach(c=>{ const th = document.createElement("th"); th.textContent = c; trh.appendChild(th); });
-  thead.appendChild(trh);
-  rows.forEach(r=>{
-    const tr = document.createElement("tr");
-    cols.forEach(c=>{
-      const td = document.createElement("td");
-      td.textContent = (typeof r[c] === 'number') ? Number(r[c]).toFixed(6) : r[c];
-      tr.appendChild(td);
-    });
-    tbody.appendChild(tr);
-  });
-}
-
-function exportCsv(){
-  window.location.href = "{% url 'export_csv' %}";
-}
-</script>
-</body>
-</html>
+  cols.for
