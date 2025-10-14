@@ -126,3 +126,5 @@ Django>=5.0
 numpy
 pandas
 matplotlib
+
+Baris Menderes
