@@ -1,10 +1,10 @@
-# camapp/views.py
 import json
 from django.http import JsonResponse, HttpResponse, HttpResponseBadRequest
 from django.shortcuts import render
 from .utils import PROFILES, stitch_segments, make_plots, convert_absolute_rows
 
 def index(request):
+    # PROFILES'ı burada kullanmıyoruz ama ileride sayfada gerekirse göndermek kolay olsun
     return render(request, "camapp/index.html", {"profiles": PROFILES})
 
 def generate(request):
@@ -15,11 +15,11 @@ def generate(request):
         rows_abs = payload.get("rows", [])
         npts = int(payload.get("npts_per_seg", 100))
 
-        # absolute → delta dönüşümü
+        # absolute -> delta dönüşümü
         rows = convert_absolute_rows(rows_abs)
 
         df = stitch_segments(rows, npts_per_seg=npts)
-        if df is None:
+        if df is None or df.empty:
             return JsonResponse({"ok": False, "error": "No rows"})
 
         preview = df.head(100).to_dict(orient="records")

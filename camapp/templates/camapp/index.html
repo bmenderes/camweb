@@ -13,25 +13,17 @@
     .btn{padding:8px 12px; border:1px solid #333; background:#fff; cursor:pointer; border-radius:8px;}
     .btn.primary{background:#111; color:#fff;}
     .charts{display:grid; grid-template-columns:1fr; gap:16px; margin-top:14px;}
-    @media (min-width: 1100px){ .charts{grid-template-columns:1fr 1fr;}}
+    @media (min-width:1100px){ .charts{grid-template-columns:1fr 1fr;}}
     img{width:100%; max-height:360px; object-fit:contain; background:#fff; border:1px solid #eee; border-radius:10px; padding:6px;}
     .card{border:1px solid #e5e7eb; border-radius:12px; padding:12px; margin-top:12px;}
     .small{font-size:12px; color:#666;}
-    input, select{padding:6px 8px; border:1px solid #ccc; border-radius:6px; min-width:110px;}
+    input,select{padding:6px 8px; border:1px solid #ccc; border-radius:6px; min-width:110px;}
     tfoot td{background:#fafafa;}
   </style>
 </head>
-
 <body>
-  <!-- CSRF -->
+  <!-- Sadece CSRF için gizli form (Django’dan açınca dolar; dosyadan açarsan boş kalır ama fallback var) -->
   <form id="csrfForm" style="display:none;">{% csrf_token %}</form>
-
-  <!-- Motion Profile seçenekleri için GİZLİ TEMPLATE (Django tarafından bir kez render edilir) -->
-  <template id="profile-options">
-    {% for p in profiles %}
-      <option value="{{p}}">{{p}}</option>
-    {% endfor %}
-  </template>
 
   <h2>CAM Profile — Çok Segmentli</h2>
 
@@ -57,20 +49,28 @@
           <th>Select</th>
           <th>Time [unit]<br><span class="small">(absolute, 100 unit = 1.00 s)</span></th>
           <th>Position [mm]<br><span class="small">(absolute)</span></th>
-          <th>Lambda (0-1)</th>
-          <th>C (0-1)</th>
+          <th>Lambda (0–1)</th>
+          <th>C (0–1)</th>
           <th>Motion Profile</th>
         </tr>
       </thead>
       <tbody>
+        <!-- İLK SATIR: seçenekler statik; JS çalışmasa da görünür -->
         <tr>
           <td><input type="checkbox"></td>
-          <!-- 100 ⇒ 1.00 s -->
           <td><input type="number" step="1" value="100"></td>
           <td><input type="number" step="0.1" value="500"></td>
           <td><input type="number" step="0.01" min="0" max="1" value="0.5"></td>
           <td><input type="number" step="0.01" min="0" max="1" value="1.00"></td>
-          <td><select class="profile-select"></select></td>
+          <td>
+            <select class="profile-select" id="profileSelectMaster">
+              <option>Straight line</option>
+              <option>Quadratic parabola</option>
+              <option selected>Polynomial of 5th degree</option>
+              <option>Simple sinus</option>
+              <option>Modified sinus</option>
+            </select>
+          </td>
         </tr>
       </tbody>
       <tfoot>
@@ -96,49 +96,44 @@
   </div>
 
 <script>
-/* ---- Select’leri doldurmak için tek kaynak ---- */
-function getProfileOptionsHTML(){
-  return document.getElementById('profile-options').innerHTML.trim();
+/* ---------- Küçük yardımcılar ---------- */
+function getCookie(name){
+  const m = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
+  return m ? decodeURIComponent(m.pop()) : '';
 }
-function hydrateAllProfileSelects(){
-  const html = getProfileOptionsHTML();
-  document.querySelectorAll('.profile-select').forEach(sel=>{
-    sel.innerHTML = html;
-    // varsayılan: Polynomial of 5th degree varsa onu seç
-    const def = "Polynomial of 5th degree";
-    if ([...sel.options].some(o=>o.value===def)) sel.value = def;
-  });
+function getCsrfToken(){
+  // Önce cookie, yoksa gizli inputtan al (Django’dan açıldıysa vardır)
+  return getCookie('csrftoken') ||
+    (document.querySelector('#csrfForm input[name="csrfmiddlewaretoken"]')?.value || '');
 }
+// Sunucu köküne göre endpoint'ler (şablon gerekmez)
+const ROOT = location.origin;
+const GEN_URL = ROOT + "/generate/";
+const CSV_URL = ROOT + "/export_csv/";
 
-/* ---- CSRF ---- */
-const csrftoken = document.querySelector('#csrfForm input[name="csrfmiddlewaretoken"]').value;
-
-/* ---- Satır işlemleri ---- */
+/* ---------- Satır işlemleri ---------- */
 function addRow(){
   const tbody = document.querySelector("#segTable tbody");
   const tr = document.createElement("tr");
+  const optionsHTML = document.getElementById('profileSelectMaster').innerHTML; // master’dan birebir kopya
   tr.innerHTML = `
     <td><input type="checkbox"></td>
     <td><input type="number" step="1" value="100"></td>
     <td><input type="number" step="0.1" value="0"></td>
     <td><input type="number" step="0.01" min="0" max="1" value="0.5"></td>
     <td><input type="number" step="0.01" min="0" max="1" value="1.00"></td>
-    <td><select class="profile-select"></select></td>
+    <td><select class="profile-select">${optionsHTML}</select></td>
   `;
   tbody.appendChild(tr);
-  // yeni eklenen select’i doldur
-  tr.querySelector('.profile-select').innerHTML = getProfileOptionsHTML();
-  const def = "Polynomial of 5th degree";
-  const sel = tr.querySelector('.profile-select');
-  if ([...sel.options].some(o=>o.value===def)) sel.value = def;
 }
-
 function deleteSelected(){
   document.querySelectorAll("#segTable tbody tr").forEach(tr=>{
-    if(tr.querySelector('input[type="checkbox"]').checked){ tr.remove(); }
+    const cb = tr.querySelector('input[type="checkbox"]');
+    if (cb && cb.checked) tr.remove();
   });
 }
 
+/* ---------- Tablo okuma ---------- */
 function getRows(){
   const rows = [];
   document.querySelectorAll("#segTable tbody tr").forEach(tr=>{
@@ -152,35 +147,66 @@ function getRows(){
   return rows;
 }
 
-/* ---- Çiz / Önizleme / CSV ---- */
+/* ---------- Çiz / Önizleme / CSV ---------- */
 async function draw(){
-  const rows = getRows();
-  if(rows.length===0){ alert("En az bir satır ekleyin."); return; }
-  // absolute time artan olmalı
-  for (let i=1;i<rows.length;i++){
-    if (rows[i].Time < rows[i-1].Time){
-      alert(`Time artan olmalı (row ${i+1}).`); return;
+  try{
+    const rows = getRows();
+    if(rows.length===0){ alert("En az bir satır ekleyin."); return; }
+    // absolute time artan olmalı
+    for (let i=1;i<rows.length;i++){
+      if (rows[i].Time < rows[i-1].Time){ alert(`Time artan olmalı (row ${i+1}).`); return; }
     }
+    const npts = parseInt(document.getElementById("npts").value || "100", 10);
+
+    const resp = await fetch(GEN_URL, {
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json',
+        'X-CSRFToken': getCsrfToken()
+      },
+      body: JSON.stringify({rows: rows, npts_per_seg: npts})
+    });
+
+    if(!resp.ok){
+      const tx = await resp.text();
+      console.error('HTTP error', resp.status, tx);
+      alert(`İstek hatası: ${resp.status}`);
+      return;
+    }
+    const data = await resp.json();
+    if(!data.ok){ console.error(data); alert(data.error || "Hata"); return; }
+
+    document.getElementById("img1").src = data.img1;
+    document.getElementById("img2").src = data.img2;
+    document.getElementById("img3").src = data.img3;
+    renderPreview(data.preview);
+  }catch(err){
+    console.error(err);
+    alert("Çizerken hata oluştu. Konsolu kontrol edin (F12).");
   }
-  const npts = parseInt(document.getElementById("npts").value || "100");
-  const resp = await fetch("{% url 'generate' %}", {
-    method:'POST',
-    headers:{ 'Content-Type':'application/json', 'X-CSRFToken': csrftoken },
-    body: JSON.stringify({rows: rows, npts_per_seg: npts})
-  });
-  const data = await resp.json();
-  if(!data.ok){ alert(data.error || "Hata"); return; }
-  document.getElementById("img1").src = data.img1;
-  document.getElementById("img2").src = data.img2;
-  document.getElementById("img3").src = data.img3;
-  renderPreview(data.preview);
 }
 
 function renderPreview(rows){
   const thead = document.querySelector("#preview thead");
   const tbody = document.querySelector("#preview tbody");
-  tbody.innerHTML = ""; thead.innerHTML = "";
-  if(!rows || rows.length===0){ return; }
+  thead.innerHTML = ""; tbody.innerHTML = "";
+  if(!rows?.length) return;
   const cols = Object.keys(rows[0]);
   const trh = document.createElement("tr");
-  cols.for
+  cols.forEach(c=>{ const th = document.createElement("th"); th.textContent = c; trh.appendChild(th); });
+  thead.appendChild(trh);
+  rows.forEach(r=>{
+    const tr = document.createElement("tr");
+    cols.forEach(c=>{
+      const td = document.createElement("td");
+      td.textContent = (typeof r[c] === 'number') ? Number(r[c]).toFixed(6) : r[c];
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+}
+
+function exportCsv(){ window.location.href = CSV_URL; }
+</script>
+</body>
+</html>
